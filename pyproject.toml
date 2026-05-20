@@ -1,0 +1,106 @@
+[project]
+name = "vooi-funding-arb-bot"
+version = "1.0.0"
+description = "Delta-neutral perpetual-futures funding-rate arbitrage bot over the VOOI Perps API (Hyperliquid, Lighter)."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "VOOI contributors" }]
+keywords = ["trading", "perpetuals", "funding-arbitrage", "delta-neutral", "vooi", "hyperliquid", "lighter"]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
+  "Topic :: Office/Business :: Financial",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Financial and Insurance Industry",
+]
+
+dependencies = [
+  "httpx[http2]>=0.27,<1.0",
+  "httpx-sse>=0.4,<1.0",
+  "pydantic>=2.7,<3.0",
+  "pydantic-settings>=2.4,<3.0",
+  "apscheduler>=3.10,<4.0",
+  "tenacity>=9.0,<10.0",
+  "structlog>=24.0,<25.0",
+  "python-dotenv>=1.0,<2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.7,<1.0",
+  "mypy>=1.13,<2.0",
+  "pytest>=8.3,<9.0",
+  "pytest-asyncio>=0.24,<1.0",
+  "respx>=0.21,<1.0",
+  "freezegun>=1.5,<2.0",
+  "datamodel-code-generator>=0.26,<1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/vooi-funding-arb-bot"
+Documentation = "https://github.com/your-org/vooi-funding-arb-bot/blob/main/README.md"
+Source = "https://github.com/your-org/vooi-funding-arb-bot"
+Issues = "https://github.com/your-org/vooi-funding-arb-bot/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["fundbot", "probe"]
+
+# =============================================================================
+# Ruff
+# =============================================================================
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+extend-exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "S", "UP", "SIM", "RUF"]
+ignore = [
+  "E501",   # handled by line-length
+  "RUF001", # ambiguous-unicode in strings (we have non-ASCII docs)
+  "RUF002",
+  "RUF003",
+  "S101",   # asserts in tests
+  "S110",   # try-except-pass — acceptable in error-tolerant network code
+  "S112",   # try-except-continue — same
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+# =============================================================================
+# Mypy
+# =============================================================================
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+warn_unused_ignores = false
+warn_redundant_casts = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+# =============================================================================
+# Pytest
+# =============================================================================
+[tool.pytest.ini_options]
+addopts = "-ra -q --tb=short"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+  "integration: marks tests that hit live APIs (deselect with -m 'not integration')",
+]

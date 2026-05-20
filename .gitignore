@@ -1,0 +1,67 @@
+# --- Secrets / local config ---
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# --- Runtime state ---
+# These are produced at runtime by the bot. Never commit live trading data.
+bot.log
+bot.log.*
+bot-*.log
+state.ndjson
+state-*.ndjson
+state-snapshot.json
+state-snapshot.json.bak-*
+state-cooldown.json
+instance.uuid
+*.pid
+logs/
+artifacts/
+probe/runs/
+
+# Local report dumps
+reports/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+
+# --- Tooling caches ---
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- Containers / cloud ---
+.fly/
+
+# --- Generated ---
+*.pdf
+*.svg
+*.png
