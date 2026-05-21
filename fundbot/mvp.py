@@ -51,6 +51,8 @@ from typing import Any
 import httpx
 from probe.markets import CRYPTO_PERPS_ACCOUNT_TYPE, is_non_crypto_prefix, margin_bucket_key
 
+from fundbot import sse as _sse_mod
+
 # =============================================================================
 # Constants & defaults
 # =============================================================================
@@ -123,7 +125,7 @@ DEFAULT_NEGATIVE_WINDOW = 2
 DEFAULT_FUNDING_BREAKEVEN_SKIP_SAFE_FLOOR = True
 DEFAULT_ESTIMATED_FRICTION_BPS = 15
 
-# Tuning note: каждое чтение в smart_neg окне должно быть < этого значения (а не любое <0,
+# Tuning note: # Каждое чтение в smart_neg окне должно быть < этого значения (а не любое <0,
 # которое включает шум ±1% APR на двух тиках подряд). Default 0 = legacy
 # поведение (любое <0). Рекомендованное значение: -0.05 (-5% APR).
 DEFAULT_SMART_NEG_VALUE_FLOOR = Decimal("0")
@@ -252,6 +254,11 @@ class Settings:
     # Защищает от HL "Insufficient margin" когда биржа считает initial margin
     # с учётом fee/slippage чуть строже, чем наш номинальный leg_collat × leverage.
     margin_headroom_pct: Decimal
+    # SSE event-stream client (Phase 1 — default disabled; latency optimisation
+    # over REST polling, REST stays the source of truth). See fundbot/sse.py.
+    sse_enabled: bool
+    sse_heartbeat_timeout_sec: float
+    sse_reconnect_max_attempts: int
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -420,6 +427,16 @@ class Settings:
             # Б7: headroom для initial margin (по умолчанию 0.5%).
             margin_headroom_pct=Decimal(
                 os.environ.get("BOT_MARGIN_HEADROOM_PCT", "0.005")
+            ),
+            # SSE event stream (default off; safe to enable in production
+            # since callers still REST-confirm every decision).
+            sse_enabled=os.environ.get("BOT_SSE_ENABLED", "false").lower()
+                in ("1", "true", "yes"),
+            sse_heartbeat_timeout_sec=float(
+                os.environ.get("BOT_SSE_HEARTBEAT_TIMEOUT_SEC", "60")
+            ),
+            sse_reconnect_max_attempts=int(
+                os.environ.get("BOT_SSE_RECONNECT_MAX_ATTEMPTS", "10")
             ),
         )
 
@@ -2079,8 +2096,35 @@ async def _open_limit_then_market(
     deadline = time.monotonic() + settings.limit_alo_timeout_sec
     filled = False
 
+    # SSE wake: register one order-waiter for this leg (Phase 2).
+    # REST below remains the source of truth; SSE only races the sleep.
+    # We track the last live waiter so we can unregister on early exit.
+    _stream = _sse_mod.get_active_stream()
+    _sse_wake: asyncio.Event | None = None
+
+    async def _arm_sse_wake() -> asyncio.Event | None:
+        if _stream is not None and _stream.is_healthy():
+            return await _stream.register_order_waiter(
+                exchange=limit_exchange, asset=limit_base, side=limit_side,
+            )
+        return None
+
+    async def _cleanup_sse_wake(ev: asyncio.Event | None) -> None:
+        if _stream is not None and ev is not None and not ev.is_set():
+            await _stream.unregister(ev)
+
+    _sse_wake = await _arm_sse_wake()
+
     while time.monotonic() < deadline:
-        await asyncio.sleep(settings.limit_alo_poll_sec)
+        woke_early = await _sse_mod.wait_first_or_timeout(
+            [_sse_wake] if _sse_wake is not None else [],
+            timeout=settings.limit_alo_poll_sec,
+        )
+        if woke_early and _sse_wake is not None and _sse_wake.is_set():
+            log.emit("OPEN_LIMIT_SSE_WAKE", arb_id=arb_id)
+            # Re-arm in case this was a spurious / partial event;
+            # next iteration's REST check is canonical either way.
+            _sse_wake = await _arm_sse_wake()
 
         # Проверяем статус limit ордера через open-orders.
         # BUG-3 workaround: Lighter может игнорировать clientOrderId при наличии stopLoss —
@@ -2165,6 +2209,9 @@ async def _open_limit_then_market(
                             break
         except httpx.HTTPError:
             pass
+
+    # SSE wake cleanup — unregister any still-live waiter for this leg.
+    await _cleanup_sse_wake(_sse_wake)
 
     if not filled:
         # Б3: DELETE /exchange/orders требует orderId (clientOrderId НЕ поддерживается API).
@@ -2646,24 +2693,51 @@ async def _close_leg_alo_then_market(
     target_entry_side = "buy" if side == "sell" else "sell"
     deadline = time.monotonic() + settings.limit_alo_close_timeout_sec
     started = time.monotonic()
-    while time.monotonic() < deadline:
-        await asyncio.sleep(settings.limit_alo_poll_sec)
-        positions_by_ex = await fetch_positions(client, (exchange,), settings)
-        cur_list = positions_by_ex.get(exchange)
-        if cur_list is None:
-            # transient fetch failure — keep waiting until deadline
-            continue
-        cur = _find_real_pos(cur_list, base, target_entry_side)
-        cur_size = _decimal_or_none(cur.get("size")) if cur else None
-        cur_size_abs = abs(cur_size) if cur_size is not None else Decimal(0)
-        if cur_size_abs < Decimal("0.0001"):
-            elapsed = round(time.monotonic() - started, 2)
-            log.emit(
-                "CLOSE_ALO_FILLED",
-                arb_id=arb_id, leg=leg_label, exchange=exchange,
-                elapsed_sec=elapsed, alo_price=str(alo_price),
+
+    # SSE wake: register a position-waiter (close → size goes to 0) so we can
+    # wake earlier than the 5s poll tick. REST below is still canonical.
+    _stream = _sse_mod.get_active_stream()
+    _close_sse_wake: asyncio.Event | None = None
+    if _stream is not None and _stream.is_healthy():
+        _close_sse_wake = await _stream.register_position_waiter(
+            exchange=exchange, asset=base,
+        )
+
+    try:
+        while time.monotonic() < deadline:
+            woke_early = await _sse_mod.wait_first_or_timeout(
+                [_close_sse_wake] if _close_sse_wake is not None else [],
+                timeout=settings.limit_alo_poll_sec,
             )
-            return r_alo  # already 2xx — position is flat
+            if woke_early and _close_sse_wake is not None and _close_sse_wake.is_set():
+                log.emit("CLOSE_ALO_SSE_WAKE", arb_id=arb_id, leg=leg_label)
+                # Re-arm — if our REST check shows still not flat, we keep waiting.
+                if _stream is not None and _stream.is_healthy():
+                    _close_sse_wake = await _stream.register_position_waiter(
+                        exchange=exchange, asset=base,
+                    )
+                else:
+                    _close_sse_wake = None
+
+            positions_by_ex = await fetch_positions(client, (exchange,), settings)
+            cur_list = positions_by_ex.get(exchange)
+            if cur_list is None:
+                # transient fetch failure — keep waiting until deadline
+                continue
+            cur = _find_real_pos(cur_list, base, target_entry_side)
+            cur_size = _decimal_or_none(cur.get("size")) if cur else None
+            cur_size_abs = abs(cur_size) if cur_size is not None else Decimal(0)
+            if cur_size_abs < Decimal("0.0001"):
+                elapsed = round(time.monotonic() - started, 2)
+                log.emit(
+                    "CLOSE_ALO_FILLED",
+                    arb_id=arb_id, leg=leg_label, exchange=exchange,
+                    elapsed_sec=elapsed, alo_price=str(alo_price),
+                )
+                return r_alo  # already 2xx — position is flat
+    finally:
+        if _stream is not None and _close_sse_wake is not None and not _close_sse_wake.is_set():
+            await _stream.unregister(_close_sse_wake)
 
     # 3) Timeout — cancel ALO and fall back to market.
     cancel_body: dict[str, Any] = {"exchange": exchange, "asset": base}
@@ -3709,11 +3783,38 @@ async def survivor_watcher_loop(
         # Reuse main reconcile path. Координация через pos.close_in_progress / pos.closed.
         await _reconcile_orphaned_legs(client, log, settings, state, all_real_positions)
 
-        # Wait для следующего poll'а (или stop).
-        try:
-            await asyncio.wait_for(stop.wait(), timeout=settings.survivor_watch_sec)
-        except asyncio.TimeoutError:
-            pass
+        # Wait для следующего poll'а (или stop, или SSE position-event для одного из
+        # активных активов — последнее даёт <1s detection при срабатывании SL/TP
+        # вместо ожидания полного survivor_watch_sec). REST остаётся источником истины:
+        # выше уже идёт fetch_positions + reconcile, и SSE wake лишь будит этот цикл.
+        _stream = _sse_mod.get_active_stream()
+        _sse_waiters: list[asyncio.Event] = []
+        if _stream is not None and _stream.is_healthy():
+            seen: set[tuple[str, str]] = set()
+            for pos in active:
+                for ex in (pos.long_exchange, pos.short_exchange):
+                    asset_for_ex = (
+                        pos.long_base_symbol if ex == pos.long_exchange else pos.short_base_symbol
+                    ) or pos.asset
+                    key = (ex, asset_for_ex.upper())
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    ev = await _stream.register_position_waiter(exchange=ex, asset=asset_for_ex)
+                    _sse_waiters.append(ev)
+
+        # Add stop event so a graceful shutdown wakes us immediately.
+        woke_early = await _sse_mod.wait_first_or_timeout(
+            _sse_waiters + [stop],
+            timeout=settings.survivor_watch_sec,
+        )
+        # Best-effort unregister of un-fired waiters (avoids registry buildup).
+        if _stream is not None:
+            for ev in _sse_waiters:
+                if not ev.is_set():
+                    await _stream.unregister(ev)
+        if woke_early and not stop.is_set():
+            log.emit("SURVIVOR_WATCH_SSE_WAKE", waiters=len(_sse_waiters))
 
     log.emit("SURVIVOR_WATCH_STOPPED")
 
@@ -3876,6 +3977,26 @@ async def run() -> int:
             survivor_watcher_loop(client, log, settings, state, stop)
         )
 
+        # SSE event stream — Phase 1. When enabled, spawns a background task
+        # that opens /exchange/updates and lets tight-loop pollers wake on
+        # push events (still REST-confirms every decision). When disabled,
+        # everything below behaves exactly as before.
+        sse_task: asyncio.Task[None] | None = None
+        if settings.sse_enabled:
+            stream = _sse_mod.VooiEventStream(
+                base_url=settings.base_url,
+                bearer_token=settings.bearer_token,
+                exchanges=tuple(settings.target_exchanges),
+                log_emit=log.emit,
+                heartbeat_timeout_sec=settings.sse_heartbeat_timeout_sec,
+                reconnect_max_attempts=settings.sse_reconnect_max_attempts,
+            )
+            _sse_mod.set_active_stream(stream)
+            sse_task = asyncio.create_task(stream.run(stop))
+        else:
+            _sse_mod.set_active_stream(None)
+            log.emit("SSE_DISABLED", reason="BOT_SSE_ENABLED=false")
+
         try:
             if hourly_mode:
                 # Почасовой режим: при старте — сразу полный TRADING (проверка + решения),
@@ -3916,6 +4037,15 @@ async def run() -> int:
                 watcher_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await watcher_task
+            # SSE stream graceful shutdown.
+            if sse_task is not None:
+                try:
+                    await asyncio.wait_for(sse_task, timeout=5.0)
+                except asyncio.TimeoutError:
+                    sse_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await sse_task
+                _sse_mod.set_active_stream(None)
 
     log.emit("BOT_STOPPED")
     return 0

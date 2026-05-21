@@ -133,6 +133,10 @@ def _make_settings(**overrides) -> Settings:
         survivor_watch_enabled=False,
         survivor_watch_sec=1.0,
         survivor_watch_idle_sec=30.0,
+        # SSE event stream (disabled in tests)
+        sse_enabled=False,
+        sse_heartbeat_timeout_sec=60.0,
+        sse_reconnect_max_attempts=10,
     )
     base.update(overrides)
     return Settings(**base)
