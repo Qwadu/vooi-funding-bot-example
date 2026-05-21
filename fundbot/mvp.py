@@ -428,9 +428,10 @@ class Settings:
             margin_headroom_pct=Decimal(
                 os.environ.get("BOT_MARGIN_HEADROOM_PCT", "0.005")
             ),
-            # SSE event stream (default off; safe to enable in production
-            # since callers still REST-confirm every decision).
-            sse_enabled=os.environ.get("BOT_SSE_ENABLED", "false").lower()
+            # SSE event stream (default on — pure latency optimisation;
+            # callers still REST-confirm every decision. Set BOT_SSE_ENABLED=false
+            # in .env to force pure-REST behaviour.)
+            sse_enabled=os.environ.get("BOT_SSE_ENABLED", "true").lower()
                 in ("1", "true", "yes"),
             sse_heartbeat_timeout_sec=float(
                 os.environ.get("BOT_SSE_HEARTBEAT_TIMEOUT_SEC", "60")
