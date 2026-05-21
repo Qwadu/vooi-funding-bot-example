@@ -40,6 +40,8 @@ Composite:
 
 4. **Brokers** — broker / integrator attribution is handled server-side by the VOOI API; you do not need to configure or pass any builder/integrator IDs. The Q9 probe still verifies that the API accepts an order without a client-supplied `broker` field.
 
+5. **SSE endpoint contract** — Q2/Q5/Q11 probe `/exchange/updates`. The server expects `exchanges` as a repeat-key query parameter (`?exchanges=hyperliquid&exchanges=lighter`) — CSV (`?exchanges=hyperliquid,lighter`) is rejected with HTTP 400 `Validation failed`. `httpx`'s default encoding for `params={"exchanges": [...]}` already produces the correct form. The bot's `fundbot/sse.py` uses the same convention.
+
 ## Запуск
 
 ```bash

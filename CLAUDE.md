@@ -85,6 +85,14 @@ All state lives in plain files on a writable volume; no DB. Paths are env-config
 
 All structured events go through `NDJsonLog.emit({"event": "...", ...})` (defined in `mvp.py`, near line 732). One event per significant action. **Don't add free-form `print()`** — downstream parsers depend on the NDJSON shape.
 
+### SSE event stream
+
+`fundbot/sse.py:VooiEventStream` maintains a long-lived SSE connection to `/exchange/updates` (default on, `BOT_SSE_ENABLED=true`). The three tight-loop pollers — `survivor_watcher_loop`, the ALO open fill watcher inside `_open_limit_then_market`, and the ALO close fill watcher inside `_close_leg_alo_then_market` — race their `asyncio.sleep` against an `asyncio.Event` from the stream via `sse.wait_first_or_timeout(...)`.
+
+**REST stays the source of truth.** SSE just lets the poll wake up faster — every decision is still confirmed by the same REST call as before. A spurious wake costs one extra REST; a missed wake means the caller falls through to the timeout path. If the stream auth-rejects, crashes, or goes silent for more than `BOT_SSE_HEARTBEAT_TIMEOUT_SEC=60`, callers automatically drop to pure REST polling.
+
+Don't try to "shortcut" the REST check on an SSE wake — the matcher is intentionally conservative and event shapes are not fully documented. Full feature doc: [`docs/SSE.md`](docs/SSE.md).
+
 ### Companion tools (separate from the bot)
 
 - **`probe/`** — phase-0 API validator. `uv run python -m probe.probe readonly` is a safe first step before running the bot at all. Subcommands `q1..q11` cover individual API contract checks (idempotency, SSE auth, 5xx behavior, etc.). Several issue real orders — check the help text.

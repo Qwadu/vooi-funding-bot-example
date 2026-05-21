@@ -296,6 +296,8 @@ Full algorithm with thresholds and rationale: [`docs/STRATEGY.md`](docs/STRATEGY
 
 The bot is a single async Python process. No external services, no database, no message queue. State lives in JSON / NDJSON files on a writable volume. SIGTERM = graceful shutdown (current cycle finishes, then state writes).
 
+A long-lived SSE connection to `/exchange/updates` (default on) lets the tight-loop pollers — the 1-second survivor watcher and the 5-second ALO fill watchers — wake on push events instead of strictly polling. REST stays the source of truth: every decision is still REST-confirmed, the stream just lets the bot react faster. See [`docs/SSE.md`](docs/SSE.md) for details and disable instructions.
+
 ### Companion tools
 
 - **`probe/`** — a phased API validation tool you run *before* the bot. Confirms your token works, your account is funded, and the venues respond as expected. See [`probe/README.md`](probe/README.md).
@@ -321,6 +323,7 @@ All configuration is environment variables. The full list with defaults and inli
 | `BOT_LOW_APR_THRESHOLD` / `_WINDOW` | Soft-close on APR decay | `0.10` / `6` |
 | `BOT_ASSET_BLACKLIST` | Skip these symbols | *(empty)* |
 | `BOT_DRY_RUN` | If `true`, no orders are placed | `true` |
+| `BOT_SSE_ENABLED` | SSE event stream — latency optimisation over REST polling. REST stays canonical. See [`docs/SSE.md`](docs/SSE.md). | `true` |
 
 The defaults are tuned to a small-capital environment ($100–500 deployed). At larger size, friction-per-arb drops and you can profitably widen the opportunity pool — see [`docs/STRATEGY.md` § Why these defaults](docs/STRATEGY.md#why-these-defaults).
 
@@ -339,6 +342,7 @@ The bot has several layers between you and a runaway loss:
 7. **Single-instance lock** — PID file at `BOT_PID_FILE` prevents accidentally running two copies on the same token.
 8. **Atomic state writes** — `.tmp` + rename, so a crash mid-write doesn't corrupt your snapshot.
 9. **Graceful shutdown** — SIGTERM finishes the current cycle, persists state, and exits cleanly.
+10. **SSE is strictly additive.** REST is canonical. If the event stream crashes, silences, or is rejected, callers fall through to their original poll-based behaviour with no state change. See [`docs/SSE.md` § Safety properties](docs/SSE.md#safety-properties).
 
 None of these are a substitute for monitoring. Watch `state.ndjson` daily.
 

@@ -55,6 +55,7 @@ See `docs/DEPLOY.md` for a generic Fly.io setup. For other orchestrators, the bo
 
 - **Don't auto-retry failed writes.** `POST /exchange/orders` is not idempotent on every venue — a retried 5xx can double-open. The bot's existing logic distinguishes safe vs unsafe retries; preserve it.
 - **Lighter ignores `clientOrderId` when bracket SL/TP are attached.** The bot has a fallback that matches by `(asset, side, size)`. Don't "fix" the apparent missing coid — it's expected.
+- **SSE is additive, not a replacement.** `fundbot/sse.py` lets pollers wake on push events, but every decision is still REST-confirmed. Don't try to skip the REST check after an SSE wake — the matcher is generous on purpose (spurious wakes are cheaper than missed events). If you find yourself wanting to trust the SSE payload directly, you almost certainly want to extend the REST check instead.
 - **Hyperliquid clientOrderId must be `0x` + 32 hex chars.** Other formats are rejected.
 - **`fundingFee` is `null` on Aster.** Code that aggregates funding must handle None.
 - **Don't fetch all positions in a tight loop.** The bot's reconcile is rate-aware — respect it.
