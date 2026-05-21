@@ -57,25 +57,8 @@ from probe.markets import CRYPTO_PERPS_ACCOUNT_TYPE, is_non_crypto_prefix, margi
 
 ALLOWED_TRADING_EXCHANGES: frozenset[str] = frozenset({"hyperliquid", "lighter", "aster"})
 
-# Hyperliquid и Lighter требуют brokerId / integratorId на каждом ордере, иначе
-# биржа отклоняет ноги нестандартными 4xx. Broker / integrator config is loaded
-# from environment so users supply their own attribution IDs. For each exchange
-# you trade, set:
-#   BOT_BROKER_HYPERLIQUID_ID, BOT_BROKER_HYPERLIQUID_FEE_BPS
-#   BOT_BROKER_LIGHTER_ID,     BOT_BROKER_LIGHTER_FEE_BPS
-#   BOT_BROKER_ASTER_ID,       BOT_BROKER_ASTER_FEE_BPS
-# If a venue's pair of vars is unset, BROKERS[venue] is None and the bot will
-# refuse to start when BOT_REFUSE_START_WITHOUT_BROKER=true (default).
-def _load_brokers_from_env() -> dict[str, dict[str, str] | None]:
-    brokers: dict[str, dict[str, str] | None] = {}
-    for ex in ("hyperliquid", "lighter", "aster"):
-        ex_id = os.environ.get(f"BOT_BROKER_{ex.upper()}_ID", "").strip()
-        ex_fee = os.environ.get(f"BOT_BROKER_{ex.upper()}_FEE_BPS", "").strip()
-        brokers[ex] = {"id": ex_id, "feeBps": ex_fee} if (ex_id and ex_fee) else None
-    return brokers
-
-
-BROKERS: dict[str, dict[str, str] | None] = _load_brokers_from_env()
+# Broker / integrator attribution is handled server-side by the VOOI API:
+# the bot does not need to set a `broker` field on outgoing orders.
 
 DEFAULT_LOOP_INTERVAL_SEC = 300  # monitor (report) cycle
 DEFAULT_TRADING_CYCLE_SEC = 3600  # trading (open/close) cycle
@@ -1720,10 +1703,6 @@ async def _open_two_markets(
         "reduceOnly": False,
         "clientOrderId": coid_short,
     }
-    if (broker := BROKERS.get(opp.long_exchange)) is not None:
-        long_body["broker"] = broker
-    if (broker := BROKERS.get(opp.short_exchange)) is not None:
-        short_body["broker"] = broker
     if long_sl_trigger is not None:
         long_body["stopLoss"] = {"triggerPrice": str(long_sl_trigger)}
     if long_tp_trigger is not None:
@@ -1792,8 +1771,6 @@ async def _open_two_markets(
                 "reduceOnly": True,
                 "clientOrderId": make_coid(settings.instance_uuid, arb_id, "rollback", opp.long_exchange),
             }
-            if (broker := BROKERS.get(opp.long_exchange)) is not None:
-                rollback_body["broker"] = broker
             for rb_attempt in range(1, 4):
                 try:
                     rb = await client.post("/exchange/orders", body=rollback_body)
@@ -2035,8 +2012,6 @@ async def _open_limit_then_market(
         "reduceOnly": False,
         "clientOrderId": limit_coid,
     }
-    if (broker := BROKERS.get(limit_exchange)) is not None:
-        limit_body["broker"] = broker
     if limit_sl_trigger is not None:
         limit_body["stopLoss"] = {"triggerPrice": str(limit_sl_trigger)}
     if limit_tp_trigger is not None:
@@ -2378,8 +2353,6 @@ async def _open_limit_then_market(
         "reduceOnly": False,
         "clientOrderId": market_coid,
     }
-    if (broker := BROKERS.get(market_exchange)) is not None:
-        market_body["broker"] = broker
     if market_sl_trigger is not None:
         market_body["stopLoss"] = {"triggerPrice": str(market_sl_trigger)}
     if market_tp_trigger is not None:
@@ -2496,8 +2469,6 @@ async def _emergency_unwind(
         "reduceOnly": True,
         "clientOrderId": make_coid(settings.instance_uuid, arb_id, "unwind", exchange),
     }
-    if (broker := BROKERS.get(exchange)) is not None:
-        unwind_body["broker"] = broker
     for attempt in range(1, 4):
         try:
             r = await client.post("/exchange/orders", body=unwind_body)
@@ -2881,8 +2852,6 @@ async def close_position(
                     settings.instance_uuid, pos.arb_id, f"close-long-{attempt}", pos.long_exchange,
                 ),
             }
-            if (broker := BROKERS.get(pos.long_exchange)) is not None:
-                long_close["broker"] = broker
             legs.append(("long", long_close))
 
         if short_open:
@@ -2896,8 +2865,6 @@ async def close_position(
                     settings.instance_uuid, pos.arb_id, f"close-short-{attempt}", pos.short_exchange,
                 ),
             }
-            if (broker := BROKERS.get(pos.short_exchange)) is not None:
-                short_close["broker"] = broker
             legs.append(("short", short_close))
 
         # Patch J: on attempt 1 of soft (non-urgent) exits, try ALO close first

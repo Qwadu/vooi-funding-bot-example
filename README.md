@@ -36,7 +36,6 @@ Before either path, prepare:
 
 - A VOOI Perps account with balance on at least two venues.
 - Your VOOI bearer token.
-- Broker / integrator IDs for the venues you will trade. The bot refuses to start without them (`BOT_REFUSE_START_WITHOUT_BROKER=true` by default). How to get and configure them: [`docs/DEPLOY.md` § Broker setup](docs/DEPLOY.md#broker-setup-one-time-before-first-trade).
 
 ### Run locally (macOS / Linux)
 
@@ -56,7 +55,7 @@ uv sync --extra dev
 
 # 3. Configure
 cp .env.example .env
-$EDITOR .env                                  # fill VOOI_BEARER_TOKEN + broker IDs
+$EDITOR .env                                  # fill VOOI_BEARER_TOKEN
 
 # 4. Validate the API contract (optional, recommended on first run)
 uv run python -m probe.probe readonly
@@ -258,7 +257,7 @@ Each cycle, the bot:
 4. **Updates per-arb history**: appends the current netAPR reading to a rolling 24-entry list, updates funding accrued, updates the sticky `funding_breakeven_achieved` flag.
 5. **Decides closes** by walking a priority list — `hard_stop_loss` → `max_hold` → `min_hold gate` → `smart_neg_N` → `smart_decl_N` → `low_apr_N`. First match wins.
 6. **Decides opens** by filtering the opportunity list — APR band, volume floors, blacklist, cooldown, slippage estimate, basis check, per-venue margin cap. Survivors get bracket SL/TP placed alongside the entry order.
-7. **Executes** with `batch_create_orders` (atomic two-leg open) or per-leg `create_order` for closes, with broker attribution.
+7. **Executes** with `batch_create_orders` (atomic two-leg open) or per-leg `create_order` for closes. Broker / integrator attribution is set server-side by the VOOI API; the bot does not need to pass any builder/integrator IDs.
 8. **Writes state back** atomically and emits an `NDJSON` event line summarizing the cycle.
 
 Full algorithm with thresholds and rationale: [`docs/STRATEGY.md`](docs/STRATEGY.md).
@@ -299,7 +298,7 @@ The bot is a single async Python process. No external services, no database, no 
 
 ### Companion tools
 
-- **`probe/`** — a phased API validation tool you run *before* the bot. Confirms your token works, your account is funded, broker config is correct, and the venues respond as expected. See [`probe/README.md`](probe/README.md).
+- **`probe/`** — a phased API validation tool you run *before* the bot. Confirms your token works, your account is funded, and the venues respond as expected. See [`probe/README.md`](probe/README.md).
 - **`scripts/`** — operational helpers: close one arb, close all, recover snapshot from logs, show balances. Each is a small standalone Python script.
 - **`skills/funding-arb-cycle/`** — a [Claude Code](https://docs.claude.com/en/docs/claude-code/overview) skill that re-implements the bot's strategy as an interactive co-pilot over the VOOI MCP. Same algorithm; you confirm each open/close manually. Useful as a learning tool or as a manual fallback when the bot is offline.
 
@@ -312,8 +311,6 @@ All configuration is environment variables. The full list with defaults and inli
 | Variable | What it controls | Default |
 |---|---|---|
 | `VOOI_BEARER_TOKEN` | Auth to the VOOI API | *(required)* |
-| `BOT_BROKER_HYPERLIQUID_ID` / `_FEE_BPS` | Builder attribution on Hyperliquid | *(required if HL in targets)* |
-| `BOT_BROKER_LIGHTER_ID` / `_FEE_BPS` | Integrator attribution on Lighter | *(required if Lighter in targets)* |
 | `BOT_TARGET_EXCHANGES` | Which venues to trade | `hyperliquid,lighter` |
 | `BOT_LEG_COLLAT_USD` | Margin per leg | `10` |
 | `BOT_LEVERAGE_TARGET` / `_CAP` | Target / hard-cap leverage | `10` / `5` |
@@ -334,15 +331,14 @@ The defaults are tuned to a small-capital environment ($100–500 deployed). At 
 The bot has several layers between you and a runaway loss:
 
 1. **`BOT_DRY_RUN=true` by default.** No order goes out unless you explicitly set it to `false`.
-2. **`BOT_REFUSE_START_WITHOUT_BROKER=true` by default.** Without broker config, venues reject orders and the bot refuses to start.
-3. **`hard_stop_loss`** — per-arb dollar threshold checked every monitor cycle (5 min by default). Hits even before `min_hold`.
-4. **`max_hold`** — every arb is force-closed after `BOT_MAX_HOLD_HOURS` regardless of P&L.
-5. **`BOT_PAIR_COOLDOWN_*`** — assets that hurt you twice in 48h are paused.
-6. **Per-venue margin cap** — bot refuses to open if it would exceed `BOT_MAX_MARGIN_PER_EXCHANGE_USD`.
-7. **Bracket SL/TP** — every open carries on-venue stop-loss and take-profit orders. They survive the bot going down.
-8. **Single-instance lock** — PID file at `BOT_PID_FILE` prevents accidentally running two copies on the same token.
-9. **Atomic state writes** — `.tmp` + rename, so a crash mid-write doesn't corrupt your snapshot.
-10. **Graceful shutdown** — SIGTERM finishes the current cycle, persists state, and exits cleanly.
+2. **`hard_stop_loss`** — per-arb dollar threshold checked every monitor cycle (5 min by default). Hits even before `min_hold`.
+3. **`max_hold`** — every arb is force-closed after `BOT_MAX_HOLD_HOURS` regardless of P&L.
+4. **`BOT_PAIR_COOLDOWN_*`** — assets that hurt you twice in 48h are paused.
+5. **Per-venue margin cap** — bot refuses to open if it would exceed `BOT_MAX_MARGIN_PER_EXCHANGE_USD`.
+6. **Bracket SL/TP** — every open carries on-venue stop-loss and take-profit orders. They survive the bot going down.
+7. **Single-instance lock** — PID file at `BOT_PID_FILE` prevents accidentally running two copies on the same token.
+8. **Atomic state writes** — `.tmp` + rename, so a crash mid-write doesn't corrupt your snapshot.
+9. **Graceful shutdown** — SIGTERM finishes the current cycle, persists state, and exits cleanly.
 
 None of these are a substitute for monitoring. Watch `state.ndjson` daily.
 

@@ -8,39 +8,8 @@ This guide covers two paths: a local long-running process, and a containerized d
 - `uv` package manager (`brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - A VOOI Perps account with at least one venue connected and balance on it
 - Your VOOI bearer token
-- Broker / integrator IDs for the venues you'll trade (see "Broker setup" below)
 
-## Broker setup (one-time, before first trade)
-
-Hyperliquid and Lighter require you to approve a builder/integrator on-chain before they accept attributed orders. The bot enforces this with `BOT_REFUSE_START_WITHOUT_BROKER=true`.
-
-### Hyperliquid
-
-```
-# Check status
-curl -H "Authorization: Bearer $VOOI_BEARER_TOKEN" \
-  https://perps-api.vooi.io/exchange/broker-status?exchange=hyperliquid
-
-# If approved=false, run the approval flow via VOOI MCP or your VOOI app UI.
-```
-
-Once approved, set in `.env`:
-
-```
-BOT_BROKER_HYPERLIQUID_ID=0x...              # builder address
-BOT_BROKER_HYPERLIQUID_FEE_BPS=15            # whatever your approved cap is
-```
-
-### Lighter
-
-Same flow against `?exchange=lighter`. Set:
-
-```
-BOT_BROKER_LIGHTER_ID=...                    # integrator account index (a number)
-BOT_BROKER_LIGHTER_FEE_BPS=150
-```
-
-Aster bundles approval into registration — no separate step.
+Broker / integrator attribution is handled server-side by the VOOI API — you do not need to obtain or configure any builder/integrator IDs.
 
 ## Path A — local long-running process
 
@@ -48,7 +17,7 @@ Aster bundles approval into registration — no separate step.
 git clone https://github.com/your-org/vooi-funding-arb-bot
 cd vooi-funding-arb-bot
 cp .env.example .env
-$EDITOR .env                    # fill in token + brokers
+$EDITOR .env                    # fill in VOOI_BEARER_TOKEN
 uv sync --extra dev
 
 # First-time safety check
@@ -100,10 +69,7 @@ A `fly.toml` is not included (your app name and org are yours). Minimal setup:
 ```bash
 fly apps create your-bot-name --org your-org
 fly volumes create your_bot_data --app your-bot-name --region nrt --size 1
-fly secrets set --app your-bot-name \
-  VOOI_BEARER_TOKEN=... \
-  BOT_BROKER_HYPERLIQUID_ID=... BOT_BROKER_HYPERLIQUID_FEE_BPS=15 \
-  BOT_BROKER_LIGHTER_ID=... BOT_BROKER_LIGHTER_FEE_BPS=150
+fly secrets set --app your-bot-name VOOI_BEARER_TOKEN=...
 fly deploy --remote-only --app your-bot-name
 ```
 
@@ -165,7 +131,6 @@ For richer monitoring, parse `state.ndjson` for the most recent `CYCLE_DONE` and
 
 ## What to do if you suspect a problem
 
-- **Bot won't start with broker error**: check `BOT_BROKER_*` env vars are set and match your approved on-chain values.
 - **All cycles emit `RECONCILE_SKIP_FETCH_FAILED`**: token may have expired. Rotate `VOOI_BEARER_TOKEN` and restart.
 - **Half-leg position visible on a venue**: don't panic. The bot's reconcile will detect it within one cycle and close the orphan. If you want to act faster, use `scripts/close_orphan.py`.
 - **Bot opened something that looks wrong**: stop the process first, inspect `state.ndjson` for the `OPEN_OK` event, then close manually via `scripts/close_one.py <arb_id>` or via the VOOI UI.

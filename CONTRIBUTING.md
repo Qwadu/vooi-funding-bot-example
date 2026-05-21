@@ -8,7 +8,7 @@ Thanks for your interest in `vooi-funding-arb-bot`. This is real-money trading s
 git clone https://github.com/your-org/vooi-funding-arb-bot
 cd vooi-funding-arb-bot
 brew install uv          # or: curl -LsSf https://astral.sh/uv/install.sh | sh
-cp .env.example .env     # fill in VOOI_BEARER_TOKEN + broker IDs
+cp .env.example .env     # fill in VOOI_BEARER_TOKEN
 uv sync --extra dev
 uv run pytest -q
 ```

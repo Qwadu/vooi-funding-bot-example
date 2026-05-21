@@ -38,7 +38,7 @@ Composite:
 
 3. **JWT** генерируется через VOOI UI (`POST /user/tokens` с Ed25519 подписью или через UI кнопку «Issue API token»).
 
-4. **Brokers** — пока для probe **не нужны**, broker config мы **проверяем** в Q9. Но для production (Phase 1+) `BOT_BROKER_*_ID` будут обязательны.
+4. **Brokers** — broker / integrator attribution is handled server-side by the VOOI API; you do not need to configure or pass any builder/integrator IDs. The Q9 probe still verifies that the API accepts an order without a client-supplied `broker` field.
 
 ## Запуск
 

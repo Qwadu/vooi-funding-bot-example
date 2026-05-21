@@ -8,9 +8,9 @@ This file is a contract between humans and any AI agent (Claude, Cursor, Aider, 
 
 ## Hard rules
 
-1. **Never commit secrets.** `.env` is gitignored. If you see a bearer token, broker ID, or any credential in a file other than `.env`, treat it as a leak — flag it and refuse to commit.
+1. **Never commit secrets.** `.env` is gitignored. If you see a bearer token or any credential in a file other than `.env`, treat it as a leak — flag it and refuse to commit.
 2. **Never edit `.env`.** Only `.env.example` (a template). Real values are operator-managed.
-3. **Never widen access without explicit confirmation.** Do not relax `BOT_REFUSE_START_WITHOUT_BROKER`, lower `BOT_STOP_LOSS_PCT`, raise position sizes, or remove safety checks unless the user asked for that specific change in that specific cycle.
+3. **Never widen access without explicit confirmation.** Do not lower `BOT_STOP_LOSS_PCT`, raise position sizes, or remove safety checks unless the user asked for that specific change in that specific cycle.
 4. **`BOT_DRY_RUN=true` is the safe default.** Do not flip it to `false` in `.env.example` or any code path. Operators flip it themselves.
 5. **Never auto-trade in tests.** Tests that hit live APIs must be marked with `@pytest.mark.integration` and require an explicit opt-in (`pytest -m integration`).
 6. **Reproducible builds.** Do not bump `pyproject.toml` dependencies without re-locking `uv.lock` and running the full test suite.
@@ -49,7 +49,6 @@ See `docs/DEPLOY.md` for a generic Fly.io setup. For other orchestrators, the bo
 - Any change that increases position size, leverage, or per-exchange margin cap.
 - Any change to the close-criteria priority list or thresholds.
 - Any new outbound call (new venue, new API endpoint).
-- Any change to broker config.
 - Any new dependency.
 
 ## Things AI agents commonly get wrong

@@ -106,12 +106,8 @@ COOLDOWN_HOURS          = 48
 EXCHANGE_SL_ENABLED     = true
 EXCHANGE_SL_BUFFER_PCT  = 0.05                          # SL trigger = liq + buffer × (entry - liq)
 
-# Brokers (per-exchange fee + integrator id; required for VOOI attribution)
-BROKERS = {
-  "hyperliquid": { "id": "<HL_BUILDER_ADDR>", "feeBps": "15" },
-  "lighter":     { "id": "<LIGHTER_INTEGRATOR_IDX>", "feeBps": "150" },
-  "aster":       { "id": "<ASTER_BUILDER_ADDR>", "feeBps": "1.5" }
-}
+# Broker / integrator attribution is handled server-side by the VOOI API.
+# No client-side broker config is needed.
 
 # History retention
 MAX_APR_HISTORY         = 24
@@ -251,7 +247,7 @@ For each approved close, in order:
    - Filter to entries with `baseSymbol == arb.long_base_symbol/short_base_symbol` and `type ∈ {"stopLoss","takeProfit"}` matching the arb's coid where available.
    - Build a `batch_cancel_orders` payload covering all matching orders (one batch per arb).
 2. Place reduce-only market close on both legs via `batch_create_orders` with:
-   - `exchange`, `asset`, `side` (inverse of entry), `size` (= entry size), `reduceOnly: true`, `clientOrderId: "mcp-<arb_id>-close-<leg>"`, plus the broker config for the venue.
+   - `exchange`, `asset`, `side` (inverse of entry), `size` (= entry size), `reduceOnly: true`, `clientOrderId: "mcp-<arb_id>-close-<leg>"`. (Broker attribution is set server-side by the API.)
 3. Surface per-leg response (status, fill, fees) to user.
 4. If both legs closed successfully (status 200/2xx): emit `CLOSE_OK` to history, remove from `positions.json`. Determine win/loss: `realized = uPnL_at_close + funding_cum - close_friction_estimate`. If `realized < 0`, increment `cooldown[asset].consecutive_losses` and set `last_loss_ts = now`. If `realized > 0`, delete `cooldown[asset]`.
 5. If only one leg closed: emit `CLOSE_FAIL half_legged` and STOP further cycle actions — surface to user, do not attempt new opens this cycle.
@@ -260,7 +256,7 @@ For each approved close, in order:
 
 For each approved open:
 
-1. Build `batch_create_orders` payload with TWO orders (long leg + short leg), each with bracket `stopLoss` and `takeProfit` (where computed), broker config, and `clientOrderId: "mcp-<arb_id>-<leg>"`.
+1. Build `batch_create_orders` payload with TWO orders (long leg + short leg), each with bracket `stopLoss` and `takeProfit` (where computed), and `clientOrderId: "mcp-<arb_id>-<leg>"`. (Broker attribution is set server-side by the API.)
 2. Submit as a single batch call. If the venue rejects bracket (HL price out of range, common error: status 400/503 + "out of range"), retry the rejected leg individually with `create_order` and without `stopLoss` / `takeProfit`. Emit `OPEN_RETRY_NO_BRACKET`.
 3. If both legs successful: emit `OPEN_OK`, insert into `positions.json` with `apr_history=[netApr]`, `peak_funding_cum=0`, `funding_breakeven_achieved=false`.
 4. If long succeeded but short failed: this is a **partial open**. Immediately fire a reduce-only market close on the long leg via `create_order` and emit `OPEN_ROLLBACK`. If rollback fails, emit `EMERGENCY_UNWIND_NEEDED` and STOP the cycle, surface to user with explicit instructions.

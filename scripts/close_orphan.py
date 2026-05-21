@@ -25,19 +25,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from probe.client import ProbeClient
 from probe.probe import _load_dotenv
 
-# Broker / integrator attribution — same env-driven approach as fundbot.mvp.
-# Set BOT_BROKER_{HYPERLIQUID,LIGHTER,ASTER}_{ID,FEE_BPS} in .env.
-def _load_brokers_from_env() -> dict[str, dict[str, str] | None]:
-    brokers: dict[str, dict[str, str] | None] = {}
-    for ex in ("hyperliquid", "lighter", "aster"):
-        ex_id = os.environ.get(f"BOT_BROKER_{ex.upper()}_ID", "").strip()
-        ex_fee = os.environ.get(f"BOT_BROKER_{ex.upper()}_FEE_BPS", "").strip()
-        brokers[ex] = {"id": ex_id, "feeBps": ex_fee} if (ex_id and ex_fee) else None
-    return brokers
-
-
-BROKERS: dict[str, dict[str, str] | None] = _load_brokers_from_env()
-
 
 async def fetch_position(
     client: ProbeClient,
@@ -93,7 +80,7 @@ async def main() -> int:
 
         close_side = "sell" if side == "buy" else "buy"
         print(f"Found {side} {asset} on {exchange}: size={size_raw}  unrealizedPnl={pos.get('unrealizedPnl')}  fundingPnl={pos.get('fundingPnl') or pos.get('fundingFee')}")
-        print(f"  → will send reduce-only {close_side} order, size={size_dec}, broker={BROKERS.get(exchange)}")
+        print(f"  → will send reduce-only {close_side} order, size={size_dec}")
         if os.environ.get("FORCE") != "1":
             ans = input("Confirm? [y/N] ").strip().lower()
             if ans != "y":
@@ -110,8 +97,6 @@ async def main() -> int:
             "reduceOnly": True,
             "clientOrderId": f"vooi-funding-arb-orphan-cleanup-{asset}-{exchange}",
         }
-        if (broker := BROKERS.get(exchange)) is not None:
-            body["broker"] = broker
 
         print(f"POST /exchange/orders body={body}")
         r = await client.post("/exchange/orders", body=body)

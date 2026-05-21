@@ -275,20 +275,7 @@ mkdir -p ~/.funding-arb
 
 (Or set `FUNDING_ARB_STATE_DIR` to a different path.)
 
-### 4. Fill in broker config
-
-Edit `SKILL.md` and replace the `<HL_BUILDER_ADDR>` / `<LIGHTER_INTEGRATOR_IDX>` placeholders with your VOOI broker IDs. Without correct broker config, Hyperliquid and Lighter reject the order with a 4xx error.
-
-### 5. Make sure brokers are approved on-venue
-
-Before the first trade, check approval status:
-
-- `hyperliquid_get_broker_status` — if `approved: false`, run `hyperliquid_prepare_approve_broker` → sign with your main wallet → `hyperliquid_execute_approve_broker`.
-- `lighter_get_broker_status` — same flow with the Lighter pair.
-
-This is a one-time on-chain action. The skill does not do it on its own; ask Claude separately ("approve my Hyperliquid builder" / "approve my Lighter integrator").
-
-### 6. First run
+### 4. First run
 
 ```
 /funding-arb-cycle dry
@@ -399,7 +386,7 @@ The strategy lives in one file (`SKILL.md`). Common extensions:
 - **Add a new close criterion.** Add a new bullet to Step 5 in the algorithm section. Pick a unique reason name (`my_criterion_N`) that will appear in `history.ndjson` for audit.
 - **Add a new filter.** Add a step to the Step 6 list. Reject candidates that fail.
 - **Tune per-asset.** Add a `PER_ASSET_OVERRIDES` map in the defaults. When evaluating a candidate, check the map for asset-specific min_net_apr / leg_collat / etc.
-- **Add a new exchange.** When a new venue ships on VOOI MCP, add it to `TARGET_EXCHANGES` and add the broker config. The rest of the algorithm is venue-agnostic.
+- **Add a new exchange.** When a new venue ships on VOOI MCP, add it to `TARGET_EXCHANGES`. The rest of the algorithm is venue-agnostic.
 
 ---
 
