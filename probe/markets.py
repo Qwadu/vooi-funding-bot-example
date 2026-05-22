@@ -1,40 +1,62 @@
 """Market classification utilities.
 
-Funding-arb bot работает **только с crypto-perps**. На Hyperliquid (и потенциально
-других биржах) есть отдельный класс инструментов:
+Funding-arb bot defaults to **crypto-perps only**. Hyperliquid (and potentially
+other venues) also list non-crypto instruments through HIP-3 dexes, distinguished
+by a `baseSymbol` prefix:
 
-- `xyz:*` — stocks/commodities (`xyz:AAPL`, `xyz:BRENTOIL`, `xyz:CORN`, ...).
-  На уровне аккаунта это отдельный sub-account `account.type == "xyz"`
-  с собственным изолированным margin pool. Нельзя открывать crypto-позиции
-  под xyz-маржой и наоборот.
-- `alias:*` — синтетические/альтернативные пары (например `alias:gold`).
-  Опасно использовать для funding-arb: спред-логика, fundingInterval и
-  liquidationPrice могут отличаться от обычных perps.
+- `xyz:*` — equities / commodities / FX (e.g. `xyz:AAPL`, `xyz:BRENTOIL`,
+  `xyz:HYUNDAI`, `xyz:PALLADIUM`).
+- `alias:*` — synthetic / aliased pairs that resolve to a different
+  `baseSymbol` on the venue side (e.g. `alias:gold` → `xyz:GOLD`).
+- `km:*` — additional HIP-3 alias namespace used for some equities
+  (e.g. `km:PLTR`).
 
-Эмпирически (см. `docs/api-probe-results.md`):
+These markets are filtered out of crypto-only scanning by `is_crypto_perps_market`.
+Set `BOT_INCLUDE_HL_NON_CRYPTO=true` to also consider them.
 
-    HL: 298 markets total = 230 crypto-perps + 68 `xyz:*`
-    accounts: type=perps (~$34) — для крипто; type=xyz (~$0) — для стоков.
+Margin pool on the current VOOI API (verified live 2026-05-22 against
+`https://perps-api.vooi.io`; swagger UI: https://perps-api.vooi.io/docs):
 
-Эти константы и хелперы — единый source of truth для probe (и будущего
-`fundbot/strategy/filter.py` в Phase 1, см. C9 в plan).
+    GET /exchange/accounts?exchanges=hyperliquid
+        → only `type="spot"` records, one per `token` (USDC, USDH).
+          There is no separate `type="xyz"` bucket.
+
+    GET /exchange/markets?exchanges=hyperliquid
+        → every `xyz:*` market reports `quoteSymbol="USDC"`, with a
+          `marginTiers` structure identical to crypto-perps. No
+          per-market `marginToken` / `marginGroup` field.
+
+    GET /exchange/quotes?exchanges=hyperliquid&asset=xyz:HYUNDAI&...
+        → 200 OK with a valid `liquidationPrice` / `baseSize` — the API
+          accepts xyz orders against the shared USDC margin pool.
+
+In other words: xyz/alias/km legs on Hyperliquid share the same USDC
+margin pool as crypto-perps. `margin_bucket_key()` therefore routes
+all prefixes to the same `hyperliquid:perps:<quote>` bucket that
+`fetch_accounts` actually populates.
+
+This module is the single source of truth for prefix → bucket routing
+used by both `fundbot/mvp.py` (opener) and `probe/`.
 """
 
 from __future__ import annotations
 
 from typing import Any, Final
 
-# Префиксы baseSymbol (с двоеточием), которые **должны** быть исключены из
-# crypto-arb сканирования. Расширяемо: при появлении новых классов добавляем сюда.
+# baseSymbol prefixes (with the trailing colon) that are NOT plain crypto-perps.
+# `is_crypto_perps_market` rejects them from crypto-only scanning; when
+# `BOT_INCLUDE_HL_NON_CRYPTO=true`, the opener routes them to the shared
+# perps margin bucket (see `BASE_PREFIX_TO_ACCOUNT_TYPE` below).
 NON_CRYPTO_PERPS_BASE_PREFIXES: Final[tuple[str, ...]] = ("xyz:", "alias:")
 
-# Тип account, используемый для crypto perps (default).
+# `account.type` for the crypto-perps margin pool (default).
 CRYPTO_PERPS_ACCOUNT_TYPE: Final[str] = "perps"
 
-# Префикс baseSymbol → `account.type` в VOOI GET /exchange/accounts.
-# `alias:*` — кросс-биржевые алиасы на HL; маржа с основного perps-пула (как crypto-perps).
+# baseSymbol prefix → `account.type` used to build the margin-bucket key.
+# All currently-known HL prefixes (xyz, alias) share the same USDC margin
+# pool as crypto-perps — see the module docstring for the live evidence.
 BASE_PREFIX_TO_ACCOUNT_TYPE: Final[dict[str, str]] = {
-    "xyz:": "xyz",
+    "xyz:": CRYPTO_PERPS_ACCOUNT_TYPE,
     "alias:": CRYPTO_PERPS_ACCOUNT_TYPE,
 }
 
@@ -50,13 +72,13 @@ def is_crypto_perps_market(market: dict[str, Any]) -> bool:
     """True если market — обычная crypto-perps пара, пригодная для funding-arb.
 
     False для:
-    - `baseSymbol` начинается с `xyz:` (stocks/commodities, отдельный margin pool);
+    - `baseSymbol` начинается с `xyz:` (HIP-3 equities/commodities;
+      shared USDC pool but excluded from crypto-only scanning by default);
     - `baseSymbol` начинается с `alias:` (синтетика);
     - `baseSymbol` отсутствует / пустой;
     - `open == False` (рынок закрыт — для arb бесполезен).
 
-    Не проверяет volume / leverage / прочие торговые ограничения — это уровень
-    `strategy/filter.py` (Phase 1).
+    Не проверяет volume / leverage / прочие торговые ограничения.
     """
     base = market.get("baseSymbol")
     if not isinstance(base, str) or not base:
@@ -68,9 +90,11 @@ def is_crypto_perps_market(market: dict[str, Any]) -> bool:
 
 
 def expected_account_type_for_base_symbol(base_symbol: str) -> str:
-    """Какой `account.type` нужно использовать для торговли этим baseSymbol.
+    """Какой `account.type` использовать для торговли этим baseSymbol.
 
-    `xyz:AAPL` → `"xyz"`, `alias:gold` / `BTC` → `"perps"`.
+    All known prefixes on Hyperliquid (`xyz:`, `alias:`) share the crypto-perps
+    USDC pool, so this returns ``"perps"`` for every input today. See the
+    module docstring for the empirical reasoning.
     """
     for prefix, acct_type in BASE_PREFIX_TO_ACCOUNT_TYPE.items():
         if base_symbol.startswith(prefix):

@@ -96,9 +96,11 @@ class TestExpectedAccountType:
         assert expected_account_type_for_base_symbol("BTC") == CRYPTO_PERPS_ACCOUNT_TYPE
         assert expected_account_type_for_base_symbol("ETH") == "perps"
 
-    def test_xyz_returns_xyz(self) -> None:
-        assert expected_account_type_for_base_symbol("xyz:AAPL") == "xyz"
-        assert expected_account_type_for_base_symbol("xyz:CORN") == "xyz"
+    def test_xyz_returns_perps(self) -> None:
+        # xyz:* HIP-3 markets share the USDC margin pool with crypto-perps
+        # (verified live 2026-05-22 — see probe/markets.py docstring).
+        assert expected_account_type_for_base_symbol("xyz:AAPL") == CRYPTO_PERPS_ACCOUNT_TYPE
+        assert expected_account_type_for_base_symbol("xyz:CORN") == CRYPTO_PERPS_ACCOUNT_TYPE
 
     def test_alias_maps_explicit_perps(self) -> None:
         assert expected_account_type_for_base_symbol("alias:gold") == CRYPTO_PERPS_ACCOUNT_TYPE
@@ -125,8 +127,8 @@ class TestConstants:
     def test_alias_in_prefixes(self) -> None:
         assert "alias:" in NON_CRYPTO_PERPS_BASE_PREFIXES
 
-    def test_xyz_maps_to_xyz_account_type(self) -> None:
-        assert BASE_PREFIX_TO_ACCOUNT_TYPE["xyz:"] == "xyz"
+    def test_xyz_maps_to_perps_account_type(self) -> None:
+        assert BASE_PREFIX_TO_ACCOUNT_TYPE["xyz:"] == "perps"
 
     def test_alias_maps_to_perps_account_type(self) -> None:
         assert BASE_PREFIX_TO_ACCOUNT_TYPE["alias:"] == "perps"
@@ -139,8 +141,12 @@ class TestMarginBucketKey:
     def test_hyperliquid_crypto_usdh(self) -> None:
         assert margin_bucket_key("hyperliquid", "km:US500", "USDH") == "hyperliquid:perps:USDH"
 
-    def test_hyperliquid_xyz(self) -> None:
-        assert margin_bucket_key("hyperliquid", "xyz:AAPL", "USDC") == "hyperliquid:xyz:USDC"
+    def test_hyperliquid_xyz_uses_perps_pool(self) -> None:
+        # xyz HIP-3 markets share the USDC margin pool with crypto-perps;
+        # the opener must look up `hyperliquid:perps:USDC`, which is the
+        # bucket that actually appears in `GET /exchange/accounts`.
+        assert margin_bucket_key("hyperliquid", "xyz:AAPL", "USDC") == "hyperliquid:perps:USDC"
+        assert margin_bucket_key("hyperliquid", "xyz:HYUNDAI", "USDC") == "hyperliquid:perps:USDC"
 
     def test_hyperliquid_alias_uses_perps_pool(self) -> None:
         assert margin_bucket_key("hyperliquid", "alias:gold", "USDC") == "hyperliquid:perps:USDC"

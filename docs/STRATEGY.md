@@ -71,7 +71,7 @@ Walk the ranked opportunity list. Reject on first filter that fails:
 8. `apr_24h / apr_7d ≤ BOT_APR_RATIO_24H_TO_7D_MAX`.
 9. Both legs' `vol24hUsd ≥ BOT_MIN_VOLUME_24H_USD` AND `≥ BOT_PER_LEG_VOLUME_MIN_USD`.
 10. Both legs are in `BOT_TARGET_EXCHANGES`.
-11. HL HIP-3 dexes (`xyz:`, `km:`) only if `BOT_INCLUDE_HL_NON_CRYPTO=true`.
+11. HL HIP-3 dexes (`xyz:`, `alias:`, `km:`) only if `BOT_INCLUDE_HL_NON_CRYPTO=true`. These markets share the standard `hyperliquid:perps:<quote>` margin pool (verified live 2026-05-22 — they appear under the same `type="spot"` account record as crypto-perps, no separate `xyz` bucket).
 
 For survivors, in netAPR-descending order:
 

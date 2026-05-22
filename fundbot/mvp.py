@@ -20,8 +20,10 @@
 - C5: hard-reject `extended` exchange.
 - C7: broker config пробрасывается (опциональный для HL — fail-soft если 4xx).
 - C9: по умолчанию hard-reject `xyz:`/`alias:` (`probe.markets`); при
-  `BOT_INCLUDE_HL_NON_CRYPTO=1` — пары с HL и не-crypto ногой допускаются,
-  маржа/капы по bucket `hyperliquid:perps` vs `hyperliquid:xyz`.
+  `BOT_INCLUDE_HL_NON_CRYPTO=1` — HIP-3 пары (xyz/alias/km) допускаются,
+  margin/caps учитываются в общем bucket `hyperliquid:perps:<quote>`
+  (xyz/alias делят USDC-пул с crypto-perps — verified live 2026-05-22;
+  см. `probe.markets` для эмпирики).
 - V8: clock drift sanity (вынесено в startup).
 - $cap per exchange + min net APR threshold.
 
