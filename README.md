@@ -45,7 +45,7 @@ Two supported paths are documented inline below: **local** (macOS/Linux dev mach
 Before either path, prepare:
 
 - A VOOI Perps account with balance on at least two venues.
-- Your VOOI bearer token.
+- Your VOOI bearer token — get it at [ultra.vooi.io/api-tokens](https://ultra.vooi.io/api-tokens).
 
 ### Run locally (macOS / Linux)
 
@@ -322,7 +322,7 @@ All configuration is environment variables. The full list with defaults and inli
 
 | Variable | What it controls | Default |
 |---|---|---|
-| `VOOI_BEARER_TOKEN` | Auth to the VOOI API | *(required)* |
+| `VOOI_BEARER_TOKEN` | Auth to the VOOI API — get it at [ultra.vooi.io/api-tokens](https://ultra.vooi.io/api-tokens) | *(required)* |
 | `BOT_TARGET_EXCHANGES` | Which venues to trade | `hyperliquid,lighter` |
 | `BOT_LEG_COLLAT_USD` | Margin per leg | `10` |
 | `BOT_LEVERAGE_TARGET` / `_CAP` | Target / hard-cap leverage | `10` / `5` |
