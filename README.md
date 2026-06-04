@@ -1,3 +1,13 @@
+> **Disclaimer**
+>
+> These examples are provided for educational purposes only. They are not financial advice and do not guarantee profit.
+>
+> The current bot examples were generated with AI-assisted development and tested before publication. They demonstrate how VOOI Ultra users can quickly prototype trading bots and agentic trading workflows using VOOI Perps API access available through VOOI Ultra.
+>
+> Testing does not make the bots risk-free. Trading bots can place real orders and interact with real funds. Review the code, configuration, strategy, and risk controls before running any bot with live capital.
+
+---
+
 # vooi-funding-arb-bot
 
 A production-grade Python bot for **delta-neutral funding-rate arbitrage** on perpetual futures, running through the [VOOI Perps API](https://perps-api.vooi.io/docs). Trades Hyperliquid and Lighter today; Aster supported in code, off by default.
