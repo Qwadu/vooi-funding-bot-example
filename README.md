@@ -10,7 +10,7 @@
 
 # vooi-funding-arb-bot
 
-A production-grade Python bot for **delta-neutral funding-rate arbitrage** on perpetual futures, running through the [VOOI Perps API](https://perps-api.vooi.io/docs). Trades Hyperliquid and Lighter today; Aster supported in code, off by default.
+A production-grade Python bot for **delta-neutral funding-rate arbitrage** on perpetual futures, running through the [VOOI Perps API](https://perps-api.vooi.io/docs). Trades Hyperliquid and Lighter by default; all 10 VOOI venues (`aster`, `extended`, `robinhood`, `binance`, `bybit`, `mexc`, `gate`, `ondo`) are supported in code — enable them via `BOT_TARGET_EXCHANGES` after connecting each venue on ultra.vooi.io.
 
 > **Real money software.** This bot places real orders against real funds. It can lose money. Read [`docs/STRATEGY.md`](docs/STRATEGY.md) and the disclaimer in [`LICENSE`](LICENSE) before running it with live capital.
 
