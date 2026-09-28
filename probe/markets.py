@@ -76,7 +76,11 @@ def is_crypto_perps_market(market: dict[str, Any]) -> bool:
       shared USDC pool but excluded from crypto-only scanning by default);
     - `baseSymbol` начинается с `alias:` (синтетика);
     - `baseSymbol` отсутствует / пустой;
-    - `open == False` (рынок закрыт — для arb бесполезен).
+    - `open == False` (рынок закрыт — для arb бесполезен);
+    - `category` присутствует и != "crypto" — универсальный гейт для венью,
+      чьи non-crypto символы не имеют HL-префиксов (ondo/robinhood stocks,
+      mexc/gate etf-index, forex, commodities, pre-ipo). Поле отсутствует
+      в старых ответах API → считаем crypto (prefix rules уже применены).
 
     Не проверяет volume / leverage / прочие торговые ограничения.
     """
@@ -84,6 +88,9 @@ def is_crypto_perps_market(market: dict[str, Any]) -> bool:
     if not isinstance(base, str) or not base:
         return False
     if is_non_crypto_prefix(base):
+        return False
+    category = market.get("category")
+    if category is not None and category != "crypto":
         return False
     # `open` иногда отсутствует — считаем default True; явное False → reject.
     return market.get("open") is not False

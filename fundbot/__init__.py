@@ -7,7 +7,7 @@ Phase 1 modules будут реализованы в порядке из docs/pl
 4. instance UUID (C6)
 5. REST-first bootstrap + SSE watchdog (C3, C4)
 6. single-instance startup gate (C6)
-7. extended hard-reject (C5)
+7. venue allowlist gate (C5) — все 10 венью VOOI API в ALLOWED_TRADING_EXCHANGES
 8. broker config refuse-start (C7)
 9. clock-drift check (V8)
 10. strategy/, execution/, position/, risk/, reporting/ модули

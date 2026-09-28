@@ -17,7 +17,6 @@
 - V4: mutex per (exchange, asset) есть, но per-exchange cap проверяется до lock.
 
 Что есть (минимум):
-- C5: hard-reject `extended` exchange.
 - C7: broker config пробрасывается (опциональный для HL — fail-soft если 4xx).
 - C9: по умолчанию hard-reject `xyz:`/`alias:` (`probe.markets`); при
   `BOT_INCLUDE_HL_NON_CRYPTO=1` — HIP-3 пары (xyz/alias/km) допускаются,
@@ -59,7 +58,21 @@ from fundbot import sse as _sse_mod
 # Constants & defaults
 # =============================================================================
 
-ALLOWED_TRADING_EXCHANGES: frozenset[str] = frozenset({"hyperliquid", "lighter", "aster"})
+# All venues the VOOI Perps API currently trades on (swagger `exchange` enum).
+# Per-venue quirks are handled below; connecting a venue is the operator's job
+# (wallet-signature / deposit / own-CEX-API-key — see .env.example).
+ALLOWED_TRADING_EXCHANGES: frozenset[str] = frozenset({
+    "hyperliquid",
+    "lighter",
+    "aster",
+    "extended",
+    "robinhood",
+    "binance",
+    "bybit",
+    "mexc",
+    "gate",
+    "ondo",
+})
 
 # Broker / integrator attribution is handled server-side by the VOOI API:
 # the bot does not need to set a `broker` field on outgoing orders.
@@ -73,7 +86,18 @@ DEFAULT_LEG_COLLAT_USD = Decimal("5")
 # даже если торгуем только на части (target_exchanges), но на ДРУГОЙ бирже
 # уже руками открыта поза по этому asset — стратегию по нему не открываем
 # (защита от двойных позиций по одному asset).
-ALL_SUPPORTED_EXCHANGES: tuple[str, ...] = ("hyperliquid", "lighter", "aster")
+ALL_SUPPORTED_EXCHANGES: tuple[str, ...] = (
+    "hyperliquid",
+    "lighter",
+    "aster",
+    "extended",
+    "robinhood",
+    "binance",
+    "bybit",
+    "mexc",
+    "gate",
+    "ondo",
+)
 DEFAULT_MAX_MARGIN_PER_EX_USD = Decimal("15")
 # Из ТЗ: min volume на стратегию = $100k.
 DEFAULT_MIN_VOLUME_24H_USD = Decimal("100000")
@@ -458,6 +482,11 @@ class MarketMeta:
     funding_interval_h: int
     max_leverage: int
     max_sig_figs: int | None = None  # Hyperliquid enforces max 5 significant figures on prices
+    # /exchange/markets `category`: "crypto", "stocks-us", "etf-index", "forex",
+    # "commodities", "pre-ipo", "stocks-asia". None when API omits the field.
+    # Unlike HL's xyz:/alias: prefixes this covers EVERY venue's non-crypto
+    # markets (ondo stocks, mexc/gate etf-index, robinhood equities...).
+    category: str | None = None
 
 
 # Global markets cache, обновляется в начале каждого cycle().
@@ -494,6 +523,7 @@ async def refresh_markets_cache(client: VooiClient, log: NDJsonLog, settings: Se
                 funding_interval_h=int(m.get("fundingInterval", 1)),
                 max_leverage=int(m.get("maxLeverage", 1)),
                 max_sig_figs=sig_figs_limit,
+                category=m.get("category"),
             )
         markets_cache.clear()
         markets_cache.update(new_cache)
@@ -744,6 +774,20 @@ def opportunity_passes_non_crypto_rules(
     return True
 
 
+def _leg_is_non_crypto_by_category(exchange: str, base_symbol: str) -> bool:
+    """True если у market в cache категория явно не-crypto.
+
+    HL non-crypto ловится префиксами xyz:/alias:, но другие венью (ondo,
+    robinhood, mexc, gate, bybit...) отдают акции/форекс/etf под обычными
+    символами — там гейт только через поле `category` из /exchange/markets.
+    Meta отсутствует (холодный cache / market не в списке) => False.
+    """
+    meta = market_meta(exchange, base_symbol)
+    if meta is None or meta.category is None:
+        return False
+    return meta.category != "crypto"
+
+
 # =============================================================================
 # NDJSON logger (stdout + state.ndjson)
 # =============================================================================
@@ -961,6 +1005,18 @@ async def fetch_opportunities(
                 long_ex,
                 short_ex,
             ):
+                continue
+
+            # Non-crypto gate by market `category` — covers venues whose
+            # non-crypto symbols carry no HL-style prefix (ondo AAPL,
+            # robinhood equities, mexc/gate stocks/etf/forex rows from
+            # /funding-strategies). Missing meta => can't verify => the
+            # prefix rules above already applied; open aborts later on
+            # missing meta anyway.
+            if (
+                _leg_is_non_crypto_by_category(long_ex, long_base)
+                or _leg_is_non_crypto_by_category(short_ex, short_base)
+            ) and (not settings.include_hl_non_crypto or "hyperliquid" not in (long_ex, short_ex)):
                 continue
 
             long_quote = str(long_md.get("quoteSymbol") or "USDC")
@@ -1361,12 +1417,16 @@ def make_coid(instance_uuid: str, arb_id: str, leg: str, exchange: str) -> str:
 
     - HL: `0x` + 32 hex chars (= 34 total). Deterministic from (instance, arb, leg)
       so retry of same intent yields same coid (HL дедупликация).
-    - Lighter/Aster/etc: human-readable `vooi-funding-arb-...`.
+    - Others: compact `vfar-<inst8>-<arb8>-<l>` (~24 chars). CEX venues cap
+      clientOrderId around 32-36 chars, so the old human-readable form
+      (`vooi-funding-arb-...`, ~55+ chars) risked rejection or silent drop on
+      binance/bybit/mexc/gate. Deterministic per (instance, arb, leg).
     """
     if exchange == "hyperliquid":
         digest = hashlib.sha256(f"{instance_uuid}-{arb_id}-{leg}".encode()).hexdigest()[:32]
         return "0x" + digest
-    return f"vooi-funding-arb-{instance_uuid}-{arb_id}-{leg}"
+    arb_tail = arb_id.rsplit("-", 1)[-1]
+    return f"vfar-{instance_uuid[:8]}-{arb_tail}-{leg[0]}"
 
 
 async def setup_leverage_only(
@@ -3212,7 +3272,10 @@ async def cycle(
     _bal_snap: dict[str, Any] = {}
     _total_settled = Decimal(0)
     _total_unrealized = Decimal(0)
-    _trading_account_keys = {k for k in accounts if k.startswith("hyperliquid:") or k == "lighter"}
+    # Settled equity суммируется по аккаунтам всех target-бирж: HL-ключи вида
+    # `hyperliquid:{type}:{token}`, остальные венью — просто имя биржи.
+    _target_set = set(settings.target_exchanges)
+    _trading_account_keys = {k for k in accounts if k.split(":")[0] in _target_set}
     for _ex_key, _bal in accounts.items():
         _settled = _bal.get("total", Decimal(0))
         _bal_snap[f"{_ex_key}.settled"] = str(_settled)
